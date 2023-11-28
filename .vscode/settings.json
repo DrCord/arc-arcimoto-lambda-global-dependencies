@@ -1,0 +1,29 @@
+{
+    "gitAngular.scopes": [
+        "args",
+        "db",
+        "dependencies",
+        "exceptions",
+        "note",
+        "pipeline",
+        "runtime",
+        "tests",
+        "user",
+        "vehicle"
+    ],
+    "python.analysis.extraPaths": [
+        "./dependencies/cerberus",
+        "./dependencies/",
+        "./arcimoto_aws_services",
+        "./arcimoto_aws_services/arcimoto_aws_services"
+    ],
+    "python.autoComplete.extraPaths": [
+        "./dependencies/cerberus",
+        "./dependencies/",
+        "./arcimoto_aws_services",
+        "./arcimoto_aws_services/arcimoto_aws_services"
+    ],
+    "python.linting.enabled": true,
+    "python.linting.pycodestyleEnabled": true,
+    "python.linting.pylintEnabled": false
+}

@@ -1,0 +1,82 @@
+{
+  "global_dependencies": {
+    "arcimoto": {
+      "name": "arcimoto",
+      "from": "arcimoto/",
+      "to": "arcimoto/"
+    },
+    "arcimoto_aws_services": {
+      "name": "arcimoto_aws_services",
+      "from": "arcimoto_aws_services/arcimoto_aws_services",
+      "to": "arcimoto_aws_services/"
+    },
+    "psycopg2": {
+      "name": "psycopg2",
+      "from": "dependencies/psycopg2.zip",
+      "action": "unzip"
+    },
+    "cerberus": {
+      "name": "cerberus",
+      "from": "dependencies/cerberus",
+      "to": "cerberus"
+    }
+  },
+  "layers": {
+    "global_dependencies": {
+      "name": "arcimoto-globals",
+      "meta": {
+        "contains": [
+          "arcimoto",
+          "arcimoto_aws_services",
+          "cerberus",
+          "psycopg2"
+        ],
+        "compatible_runtimes": [
+          "python3.8"
+        ]
+      }
+    },
+    "global_dependencies_dev": {
+      "name": "arcimoto-globals-dev",
+      "meta": {
+        "contains": [
+          "arcimoto",
+          "arcimoto_aws_services",
+          "cerberus",
+          "psycopg2"
+        ],
+        "compatible_runtimes": [
+          "python3.8"
+        ]
+      }
+    },
+    "global_dependencies_staging": {
+      "name": "arcimoto-globals-staging",
+      "meta": {
+        "contains": [
+          "arcimoto",
+          "arcimoto_aws_services",
+          "cerberus",
+          "psycopg2"
+        ],
+        "compatible_runtimes": [
+          "python3.8"
+        ]
+      }
+    },
+    "global_dependencies_test": {
+      "name": "arcimoto-globals-test",
+      "meta": {
+        "contains": [
+          "arcimoto",
+          "arcimoto_aws_services",
+          "cerberus",
+          "psycopg2"
+        ],
+        "compatible_runtimes": [
+          "python3.8"
+        ]
+      }
+    }
+  }
+}

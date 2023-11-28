@@ -1,0 +1,12 @@
+.DS_Store
+*.pyc
+build
+env
+lambda.zip
+node_modules
+payload.json
+/test-reports
+linting_flake8.txt
+arcimoto.egg-info
+# used in the pipeline during semantic-release: publish
+/release-publish

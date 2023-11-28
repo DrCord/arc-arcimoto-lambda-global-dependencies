@@ -1,0 +1,415 @@
+image: python:3.9.15
+
+definitions:
+  steps:
+    - step: &automate-pr-to-awslambda
+        name: Create Dependent Repo PR in awslambda
+        image: node:18
+        caches:
+          - node
+        script:
+          # set pipeline to fail on errors
+          - set -e
+          # get version published info from artifact
+          - >
+            export VERSION_PUBLISHED=$(cat release-publish/version_published.txt)
+          # check if new version published - if not exit
+          - |
+            if [ "$VERSION_PUBLISHED" = false ]; then
+              exit 0
+            fi
+          # get version published type info from artifact
+          - >
+            export VERSION_PUBLISHED_TYPE=$(cat release-publish/version_published_type.txt)
+          - >
+            export VERSION_CURRENT=$(cat release-publish/version_current.txt)
+          # setup commit message with default type of minor version
+          - export COMMIT_MESSAGE_TYPE="feat"
+          - export COMMIT_MESSAGE_SCOPE="submodule"
+          - export COMMIT_MESSAGE_BODY="${BITBUCKET_REPO_SLUG} version ${VERSION_CURRENT} release"
+          - |
+            if [ "$VERSION_PUBLISHED_TYPE" == "patch" ]; then
+              export COMMIT_MESSAGE_TYPE="fix"
+            fi
+          - |
+            if [ "$VERSION_PUBLISHED_TYPE" == "major" ]; then
+              export COMMIT_MESSAGE_BODY="BREAKING CHANGE: $COMMIT_MESSAGE_BODY"
+            fi
+          - >
+            export COMMIT_MESSAGE="${COMMIT_MESSAGE_TYPE}(${COMMIT_MESSAGE_SCOPE}): ${COMMIT_MESSAGE_BODY}"
+          - echo $COMMIT_MESSAGE
+          - export DEPENDENT_REPO_SLUG="awslambda"
+          - export SOURCE_BRANCH="MAINT-arcimoto-lambda-global-dependencies-$(date +"%F_%H.%M.%S")"
+          # install dependencies
+          - apt-get update && apt-get -y install curl jq
+          # get BB token from artifact from get-bb-auth-token step
+          - export BB_TOKEN=$(cat bb_token.txt)
+          # get dependent repo default reviewers via API
+          - export DEFAULT_REVIEWERS_ENDPOINT=https://api.bitbucket.org/2.0/repositories/${BITBUCKET_REPO_OWNER}/${DEPENDENT_REPO_SLUG}/default-reviewers
+          - >
+              export DEFAULT_REVIEWERS=$(curl ${DEFAULT_REVIEWERS_ENDPOINT} \
+               -s -S -f -X GET \
+               -H "Authorization: Bearer ${BB_TOKEN}" | jq '.values' | jq 'map({uuid})' )
+          # install gulp globally (gulp is required both globally and locally)
+          - npm i -g gulp
+          # install gulp task dependencies locally
+          - npm i gulp axios
+          # setup git config
+          - git config --global pull.ff only
+          # use bot programatic user for git operations
+          - git config --global user.email "swe-accounts@arcimoto.com" && git config --global user.name "SWE Accounts"
+          # clone dependent repo and enter directory
+          - git clone --recurse-submodules git@bitbucket.org:${BITBUCKET_REPO_OWNER}/${DEPENDENT_REPO_SLUG}.git && cd $DEPENDENT_REPO_SLUG
+          # create & checkout feature branch from dev branch in dependent repo
+          - git fetch origin
+          - git checkout -b $SOURCE_BRANCH origin/dev
+          # init and update git submodule
+          - git submodule update --init --remote
+          # git stage and commit submodule update
+          - git add dependencies/arcimoto
+          - git commit -m "$COMMIT_MESSAGE"
+          # push branch to origin
+          - git push --set-upstream origin $SOURCE_BRANCH
+          # go back to root bitbucket pipeline directory
+          - cd ..
+          # execute gulp task to create PR from feature branch to dev
+          - gulp createpr --t $BB_TOKEN --b $SOURCE_BRANCH --o $BITBUCKET_REPO_OWNER --s $DEPENDENT_REPO_SLUG --r "$DEFAULT_REVIEWERS"
+    - step: &build-fail-if-any-test-failures
+        name: Fail Build if Any Test Failures
+        script:
+          # fail the build if any unit test failures/errors in xml unittest output folder
+          - |
+            if [ ! -z "$(ls -A tests-output)" ]; then
+              for file in tests-output/*; do
+                if [ "$(grep -c '<failure\|<error' "${file}")" -gt 0 ]; then
+                  exit 1
+                fi
+              done
+            fi
+    - step: &build-layer-global-dependencies-dev
+        name: Build Dev Global Dependencies Layer
+        caches:
+          - pip
+        script:
+          - git submodule update --init --recursive
+          # add root user installed python packages to system path
+          - export PATH=$PATH:/root/.local/bin
+          # install pip packages with --user flag to auto-cache
+          - pip install --user -r requirements.txt
+          # create new dev layer version
+          - python -m arcimoto_lambda_utility layer --description "Created by Pipeline Execution ${BITBUCKET_BUILD_NUMBER}" global_dependencies_dev
+    - step: &build-layer-global-dependencies-prod
+        name: Build Prod Global Dependencies Layer
+        caches:
+          - pip
+        script:
+          - git submodule update --init --recursive
+          # add root user installed python packages to system path
+          - export PATH=$PATH:/root/.local/bin
+          # install pip packages with --user flag to auto-cache
+          - pip install --user -r requirements.txt
+          # create new production layer version
+          - python -m arcimoto_lambda_utility layer --description "Created by Pipeline Execution ${BITBUCKET_BUILD_NUMBER}" global_dependencies
+    - step: &build-layer-global-dependencies-staging
+        name: Build Staging Global Dependencies Layer
+        caches:
+          - pip
+        script:
+          - git submodule update --init --recursive
+          # add root user installed python packages to system path
+          - export PATH=$PATH:/root/.local/bin
+          # install pip packages with --user flag to auto-cache
+          - pip install --user -r requirements.txt
+          # create new staging layer version
+          - python -m arcimoto_lambda_utility layer --description "Created by Pipeline Execution ${BITBUCKET_BUILD_NUMBER}" global_dependencies_staging
+    - step: &email-release-complete-dev
+        name: Send Completion Email - Dev Release
+        caches:
+          - docker
+        script:
+          - BB_LINK="https://bitbucket.org/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/"
+          - HEADER="#Arcimoto Lambda Global Dependencies Release to Dev Complete"
+          - CONTENT="The pipeline for a merge to the \`dev\` branch for the \`arcimoto-lambda-global-dependencies\` repo has completed."
+          - BUILD_LINK="[Pipeline Execution ${BITBUCKET_BUILD_NUMBER}](${BB_LINK}/addon/pipelines/home#!/results/${BITBUCKET_BUILD_NUMBER})"
+          - printf "$HEADER\n\n$CONTENT\n\n$BUILD_LINK" | docker run -i datafolklabs/markdown > email_body.html
+          - pipe: atlassian/email-notify:0.8.0
+            variables:
+              USERNAME: $SES_SMTP_USERNAME
+              PASSWORD: $SES_SMTP_PASSWORD
+              FROM: no-reply@arcimoto.com
+              TO: algd-release-dev@arcimoto.com
+              SUBJECT: Arcimoto Lambda Global Dependencies - Release to Dev Complete
+              HOST: email-smtp.us-west-2.amazonaws.com
+              BODY_HTML: email_body.html
+    - step: &email-release-complete-prod
+        name: Send Completion Email - Production Release
+        caches:
+          - docker
+          - pip
+        script:
+          # add root user installed python packages to system path
+          - export PATH=$PATH:/root/.local/bin
+          # install pip packages with --user flag to auto-cache
+          - pip install --user -r requirements.txt
+          # use CI programatic user with git ssh origin
+          - git remote set-url origin ${BITBUCKET_GIT_SSH_ORIGIN}
+          - git config --global advice.detachedHead false
+          - git fetch
+          - git checkout origin/master
+          # create email content
+          # if no new semantic version published then use --current flag with `semantic-release print-version`
+          - VERSION=$([[semantic-release print-version]] && semantic-release print-version || semantic-release print-version --current)
+          - BB_LINK="https://bitbucket.org/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/"
+          - HEADER="#Arcimoto Lambda Global Dependencies Release v${VERSION} to Production Complete"
+          - CONTENT="The pipeline for a merge to the \`master\` branch for the \`arcimoto-lambda-global-dependencies\` repo has completed. If this version has already been released then this re-release only contains incidental changes not essential to the end user experience - e.g. build dependencies, etc."
+          - BUILD_LINK="[Pipeline Execution ${BITBUCKET_BUILD_NUMBER}](${BB_LINK}/addon/pipelines/home#!/results/${BITBUCKET_BUILD_NUMBER})"
+          - printf "$HEADER\n\n$CONTENT\n\n$BUILD_LINK" | docker run -i datafolklabs/markdown > email_body.html
+          - pipe: atlassian/email-notify:0.8.0
+            variables:
+              USERNAME: $SES_SMTP_USERNAME
+              PASSWORD: $SES_SMTP_PASSWORD
+              FROM: no-reply@arcimoto.com
+              TO: algd-release@arcimoto.com
+              SUBJECT: Arcimoto Lambda Global Dependencies v${VERSION} - Release to Production Complete
+              HOST: email-smtp.us-west-2.amazonaws.com
+              BODY_HTML: email_body.html
+              ATTACHMENTS: CHANGELOG.md
+    - step: &email-release-complete-staging
+        name: Send Completion Email - Staging Release
+        caches:
+          - docker
+        script:
+          - BB_LINK="https://bitbucket.org/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/"
+          - HEADER="#Arcimoto Lambda Global Dependencies Release to Staging Complete"
+          - CONTENT="The pipeline for a merge to the \`staging\` branch for the \`arcimoto-lambda-global-dependencies\` repo has completed."
+          - BUILD_LINK="[Pipeline Execution ${BITBUCKET_BUILD_NUMBER}](${BB_LINK}/addon/pipelines/home#!/results/${BITBUCKET_BUILD_NUMBER})"
+          - printf "$HEADER\n\n$CONTENT\n\n$BUILD_LINK" | docker run -i datafolklabs/markdown > email_body.html
+          - pipe: atlassian/email-notify:0.8.0
+            variables:
+              USERNAME: $SES_SMTP_USERNAME
+              PASSWORD: $SES_SMTP_PASSWORD
+              FROM: no-reply@arcimoto.com
+              TO: algd-release-staging@arcimoto.com
+              SUBJECT: Arcimoto Lambda Global Dependencies - Release to Staging Complete
+              HOST: email-smtp.us-west-2.amazonaws.com
+              BODY_HTML: email_body.html
+    - step: &email-tests-complete
+        name: Send Tests Completion Email
+        caches:
+          - docker
+        script:
+          # count failures
+          - failures=0
+          - |
+            for file in tests-output/*; do
+              failures=$((failures+"$(grep -l '<failure\|<error' "${file}" | wc -l)"))
+            done
+          # zip up tests-output for attachment
+          - python -c "import shutil;shutil.make_archive('test-reports','zip',root_dir='.', base_dir='tests-output')"
+          # create email pieces
+          - SUBJECT="Arcimoto Lambda Global Dependencies - Tests Complete for Pull Request ${BITBUCKET_PR_ID} - "
+          - email=$(git log --format='%ae' ${BITBUCKET_COMMIT}^!)
+          - HEADER="#Arcimoto Lambda Global Dependencies Tests Complete - "
+          - |
+            if [ "$failures" -eq "0" ]; then
+              SUBJECT="${SUBJECT}Success"
+              HEADER="${HEADER}Success"
+            else
+              SUBJECT="${SUBJECT}Failure"
+              HEADER="${HEADER}Failure"
+            fi
+          - CONTENT="The pipeline running tests for the \`arcimoto-lambda-global-dependencies\` repo has completed."
+          - FAILURES="###Test Failures - ${failures}"
+          - BB_LINK="https://bitbucket.org/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/"
+          - BUILD_LINK="- [Pipeline Execution ${BITBUCKET_BUILD_NUMBER}](${BB_LINK}/addon/pipelines/home#!/results/${BITBUCKET_BUILD_NUMBER})"
+          - PR_LINK="- [Pull Request ${BITBUCKET_PR_ID}](${BB_LINK}/pull-requests/${BITBUCKET_PR_ID})"
+          # assemble pieces into email
+          - printf "$HEADER\n\n$CONTENT\n\n$FAILURES\n\n$BUILD_LINK\n$PR_LINK" | docker run -i datafolklabs/markdown > email_body.html
+          # send email
+          - pipe: atlassian/email-notify:0.8.0
+            variables:
+              USERNAME: $SES_SMTP_USERNAME
+              PASSWORD: $SES_SMTP_PASSWORD
+              FROM: no-reply@arcimoto.com
+              TO: $email
+              SUBJECT: $SUBJECT
+              HOST: email-smtp.us-west-2.amazonaws.com
+              BODY_HTML: email_body.html
+              ATTACHMENTS: test-reports.zip
+    - step: &get-bb-auth-token
+        name: Get BB Auth Token
+        image: node:18
+        caches:
+          - node
+        script:
+          # set pipeline to fail on errors
+          - set -e
+          - apt-get update && apt-get -y install curl jq
+          # get BB token via API
+          - >
+            export BB_TOKEN=$(curl -s -S -f -X POST -u "${BB_AUTH_STRING}" \
+              https://bitbucket.org/site/oauth2/access_token \
+              -d grant_type=client_credentials -d scopes="repository" | jq --raw-output '.access_token')
+          - echo $BB_TOKEN > bb_token.txt
+          - > # if file empty fail step
+            [ -s bb_token.txt ] || exit 1
+        artifacts:
+          - bb_token.txt
+    - step: &publish-new-semantic-release
+        name: Publish New Semantic Release
+        caches:
+          - pip
+        script:
+          # add root user installed python packages to system path
+          - export PATH=$PATH:/root/.local/bin
+          # install pip packages with --user flag to auto-cache
+          - pip install --user -r requirements.txt
+          # set initial version variable for comparison later
+          - export VERSION_INITIAL=$(semantic-release print-version --current)
+          # allow push using CI programatic user during semantic-release publish op by using git ssh origin
+          - git remote set-url origin ${BITBUCKET_GIT_SSH_ORIGIN}
+          # init and update git submodules
+          - git submodule update --init --recursive
+          # create directory for release output info
+          - mkdir release-publish
+          # capture output of semantic-release publish in file
+          # publish new semantic release if warranted
+          - semantic-release publish > release-publish/semantic_release_publish_build_output.txt
+          # set current version variable for comparison later
+          - export VERSION_CURRENT=$(semantic-release print-version --current)
+          # set boolean variable for if new version was published
+          - |
+            if [ "$VERSION_INITIAL" != "$VERSION_CURRENT" ]; then
+              export VERSION_PUBLISHED=true
+            else
+              export VERSION_PUBLISHED=false
+            fi
+          # set new version creation info into files for use in other steps
+          - echo $VERSION_CURRENT > release-publish/version_current.txt
+          - echo $VERSION_INITIAL > release-publish/version_initial.txt
+          - echo $VERSION_PUBLISHED > release-publish/version_published.txt
+          # read major, minor, patch version numbers into separate variables
+          - IFS=. read -r VERSION_INITIAL_MAJOR VERSION_INITIAL_MINOR VERSION_INITIAL_PATCH <<< $VERSION_INITIAL
+          - IFS=. read -r VERSION_CURRENT_MAJOR VERSION_CURRENT_MINOR VERSION_CURRENT_PATCH <<< $VERSION_CURRENT
+          # set default of empty string for version published type
+          - export VERSION_PUBLISHED_TYPE=""
+          # process file output to determine version bump type, exit with failure if unable to determine
+          - |
+            if [ "$VERSION_PUBLISHED" = true ]; then
+              if [ $VERSION_CURRENT_MAJOR -gt $VERSION_INITIAL_MAJOR ]; then
+                export VERSION_PUBLISHED_TYPE="major"
+              elif [ $VERSION_CURRENT_MINOR -gt $VERSION_INITIAL_MINOR ]; then
+                export VERSION_PUBLISHED_TYPE="minor"
+              elif [ $VERSION_CURRENT_PATCH -gt $VERSION_INITIAL_PATCH ]; then
+                export VERSION_PUBLISHED_TYPE="patch"
+              fi
+              if [ -z "${VERSION_PUBLISHED_TYPE}" ]; then
+                exit "Failure: New version published but unable to determine VERSION_PUBLISHED_TYPE from VERSION_INITIAL ({$VERSION_INITIAL}) and VERSION_CURRENT ({$VERSION_CURRENT}) comparison"
+              fi
+            fi
+          - echo $VERSION_PUBLISHED_TYPE > release-publish/version_published_type.txt
+          # rebase master branch onto staging and dev branches if new version was published
+          - |
+            if [ "$VERSION_PUBLISHED" = true ]; then
+              git fetch
+              git checkout -b staging && git rebase origin/master && git push
+              git checkout -b dev && git rebase origin/master && git push
+            fi
+        artifacts:
+          - release-publish/**
+    - step: &tests-build-layer
+        name: Test - Build Global Dependencies Layer
+        caches:
+          - pip
+        script:
+          - git submodule update --init --recursive
+          # add root user installed python packages to system path
+          - export PATH=$PATH:/root/.local/bin
+          # install pip packages with --user flag to auto-cache
+          - pip install --user -r requirements.txt
+          # build test layer
+          - python -m arcimoto_lambda_utility layer --description "Created by Pipeline Test - Build Global Dependencies Layer" global_dependencies_test
+    - step: &tests-dependencies-json
+        name: Dependencies and Schema Files - Validity Tests
+        condition:
+          changesets:
+            includePaths:
+              - dependencies*.json
+        caches:
+          - pip
+        script:
+          - mkdir test-reports
+          # add root user installed python packages to system path
+          - export PATH=$PATH:/root/.local/bin
+          # install pip packages with --user flag to auto-cache
+          - pip install --user -r requirements.txt
+          # run tests
+          - python -m arcimoto_lambda_utility test None --test-dependencies-file-exists --output-xml
+          - python -m arcimoto_lambda_utility test None --test-dependencies-schema-exists --output-xml
+          - python -m arcimoto_lambda_utility test None --test-dependencies-file-valid-json --output-xml
+          - python -m arcimoto_lambda_utility test None --test-dependencies-schema-valid-json --output-xml
+          - python -m arcimoto_lambda_utility test None --test-dependencies-file-valid-for-schema --output-xml
+          # tests-output folder carried to other steps to prevent polution from tests auto-detection
+          - cp -a test-reports/. tests-output
+        artifacts:
+          - tests-output/**
+    - step: &tests-linting-flake8
+        # this will cause a step failure if there are any linting failures
+        name: Test - Linting - Flake8
+        caches:
+          - pip
+        script:
+          # add root user installed python packages to system path
+          - export PATH=$PATH:/root/.local/bin
+          # install pip packages with --user flag to auto-cache
+          - pip install --user -r requirements.txt
+          # run tests
+          - flake8 arcimoto --max-line-length=180 --ignore=E501,W503,W504 >> linting_flake8.txt
+          - flake8 tests --max-line-length=180 --ignore=E501,W503,W504 >> linting_flake8.txt
+        artifacts:
+          - linting_flake8.txt
+    - step: &tests-unit-run
+        name: Unit Tests - Run
+        caches:
+          - pip
+        script:
+          - git submodule update --init --recursive
+          - mkdir test-reports
+          # add root user installed python packages to system path
+          - export PATH=$PATH:/root/.local/bin
+          # install pip packages with --user flag to auto-cache
+          - pip install --user -r requirements.txt
+          # run tests
+          - python bitbucket-pipelines-tests-runner.py
+          # tests-output folder carried to other steps to prevent polution from tests auto-detection
+          - cp -a test-reports/. tests-output
+        artifacts:
+          - tests-output/**
+
+pipelines:
+  pull-requests:
+    'TEL-*':
+      - step: *tests-linting-flake8
+      - step: *tests-dependencies-json
+      - step: *tests-unit-run
+      - step: *tests-build-layer
+      - parallel: # finish
+        - step: *email-tests-complete
+        - step: *build-fail-if-any-test-failures
+
+  branches:
+    dev:
+      - step: *build-layer-global-dependencies-dev
+      - step: *email-release-complete-dev
+
+    staging:
+      - step: *build-layer-global-dependencies-staging
+      - step: *email-release-complete-staging
+
+    master:
+      - parallel:
+        - step: *get-bb-auth-token
+        - step: *publish-new-semantic-release
+        - step: *build-layer-global-dependencies-prod
+      - step: *automate-pr-to-awslambda
+      - step: *email-release-complete-prod

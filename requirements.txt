@@ -1,0 +1,7 @@
+boto3
+cerberus
+flake8
+python-semantic-release
+psycopg2
+xmlrunner
+git+ssh://git@bitbucket.org/arcimotocode1/arcimoto-lambda-utility.git

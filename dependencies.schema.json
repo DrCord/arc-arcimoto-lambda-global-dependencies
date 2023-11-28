@@ -1,0 +1,213 @@
+{
+  "$schema":"http://json-schema.org/draft-06/schema#",
+  "title":"Arcimoto AWS Lambda Dependencies Definitions",
+  "description":"Dependency definitions to build deployment packages for AWS Lambdas and Layers",
+  "type":"object",
+  "properties":{
+     "global_dependencies":{
+        "description":"Dependencies of all (or almost all) lambdas that are bundled into the global_dependencies layer",
+        "type":"object",
+        "properties" : {
+          "arcimoto" : {
+            "type" : "object",
+            "properties" : {
+              "from" : {
+                "type" : "string"
+              },
+              "to" : {
+                "type" : "string"
+              }
+            },
+            "required": [
+               "from",
+               "to"
+            ]
+          },
+          "psycopg2" : {
+            "type" : "object",
+            "properties" : {
+              "from" : {
+                "type" : "string"
+              },
+              "action" : {
+                "type" : "string"
+              }
+            },
+            "required":[
+               "from",
+               "action"
+            ]
+          },
+          "cerberus" : {
+            "type" : "object",
+            "properties" : {
+              "from" : {
+                "type" : "string"
+              },
+              "to" : {
+                "type" : "string"
+              }
+            },
+            "required":[
+               "from",
+               "to"
+            ]
+          }
+        },
+        "required":[
+           "arcimoto",
+           "arcimoto_aws_services",
+           "psycopg2",
+           "cerberus"
+        ]
+     },
+     "layers":{
+        "description":"AWS Lambda Layer definitions",
+        "type":"object",
+        "properties": {
+          "global_dependencies": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "meta": {
+                "type": "object",
+                "properties": {
+                  "contains": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "arcimoto",
+                        "arcimoto_aws_services",
+                        "psycopg2",
+                        "cerberus"
+                      ]
+                    }
+                  },
+                  "compatible_runtimes": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "python3.8"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "contains",
+                  "compatible_runtimes"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "meta"
+            ]
+          },
+          "global_dependencies_dev": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "meta": {
+                "type": "object",
+                "properties": {
+                  "contains": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "arcimoto",
+                        "arcimoto_aws_services",
+                        "psycopg2",
+                        "cerberus"
+                      ]
+                    }
+                  },
+                  "compatible_runtimes": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "python3.8"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "contains",
+                  "compatible_runtimes"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "meta"
+            ]
+          },
+          "global_dependencies_staging": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "meta": {
+                "type": "object",
+                "properties": {
+                  "contains": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "arcimoto",
+                        "arcimoto_aws_services",
+                        "psycopg2",
+                        "cerberus"
+                      ]
+                    }
+                  },
+                  "compatible_runtimes": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "python3.8"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "contains",
+                  "compatible_runtimes"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "meta"
+            ]
+          }
+        },
+        "required": [
+          "global_dependencies",
+          "global_dependencies_dev",
+          "global_dependencies_staging",
+          "global_dependencies_test"
+        ]
+     }
+  },
+  "required":[
+     "global_dependencies",
+     "layers"
+  ]
+}
